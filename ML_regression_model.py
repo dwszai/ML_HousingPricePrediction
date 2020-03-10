@@ -57,7 +57,7 @@ def plot_chart(df, feature):
     Returns:
         figure: A figure containing 3 plots for visualization  
     """
-    
+    sns.set(style='darkgrid')
     # Set figure dimension and allocate grids in figure
     fig = plt.figure(figsize=(16,10), constrained_layout=True)
     gs = fig.add_gridspec(3,3)
@@ -127,7 +127,6 @@ def scatter_plots(df, features):
     Returns:
         figure: scatter plots of each feature vs target variable 
     """
-    sns.set(style='darkgrid')
     sns.pairplot(df[features])
     
 scatter_plots(train, features)
@@ -176,7 +175,7 @@ def bivariate(df, predictor, target):
 bivariate(train, 'GrLivArea', 'SalePrice')
 # Delete selected outliers
 train = train[train['GrLivArea'] < 4500]
-train.reset_index(drop = True, inplace = True)
+train.reset_index(drop=True, inplace=True)
 # Copy for comparison chart
 pre_train = train.copy()
 # Choose whether to drop, uncertanity
@@ -310,6 +309,12 @@ def check_missing(df):
 
 check_missing(full_data)
 
+# Convert these features to categorical
+full_data['MSSubClass'] = full_data['MSSubClass'].apply(str)
+full_data['OverallCond'] = full_data['OverallCond'].astype(str)
+full_data['YrSold'] = full_data['YrSold'].astype(str)
+full_data['MoSold'] = full_data['MoSold'].astype(str)
+
 
 #===========================HANDLE UNNECESSARY DATA============================
 def repetitive(df): 
@@ -332,8 +337,8 @@ print(data_dup_drop.shape)
 print("Number of duplicates dropped: ")
 print("Rows: {}".format(full_data.shape[0] - data_dup_drop.shape[0]))
 print("Columns: {}".format(full_data.shape[1] - data_dup_drop.shape[1]))
-# Update new dataset without any duplicates
-full_data = data_dup_drop
+# Update new dataset without any duplicates, drop or not depends on requirements
+# full_data = data_dup_drop
 
 
 #=============================FEATURE ENGINEERING==============================
@@ -355,7 +360,7 @@ def fix_skewness(df):
     num_feat = df.dtypes[df.dtypes != "object"].index
     skewed_num_feat = df[num_feat].apply(lambda x: skew(x)).sort_values(ascending=False)
     high_skew = skewed_num_feat[abs(skewed_num_feat) > 0.5].index       # high skewed if skewness above 0.5
-    
+    # Use boxocx transformation to fix skewness
     for feat in high_skew:
         df[feat] = boxcox1p(df[feat], boxcox_normmax(df[feat] + 1))
 
@@ -378,6 +383,10 @@ full_data['Total_porchSF'] = (full_data['3SsnPorch'] + full_data['EnclosedPorch'
 # Create dummy variabes
 final_data = pd.get_dummies(full_data).reset_index(drop=True)
 
+# Final X train set and X test set
+X = final_data.iloc[:len(y), :]     # take as many rows as y dataset (SalePrice), all columns
+X_final_test = final_data.iloc[len(y):, :]    # take the rest of the rows and all columns
+
 def overfit_features(df):
     """Find a list of features that are overfitted"""
     overfit = []
@@ -387,21 +396,12 @@ def overfit_features(df):
             overfit.append(col)
     return overfit
 
-# Final X train set and X test set
-X = final_data.iloc[:len(y), :]     # take as many rows as y dataset (SalePrice), all columns
-X_final_test = final_data.iloc[len(y):, :]    # take the rest of the rows and all columns
+overfits = overfit_features(X)
 
-
-print("List of overfitted features: \n{}".format(overfit_features(X)))
-X = X.drop(overfit_features(X), axis=1)
-print("List of overfitted features: \n{}".format(overfit_features(X_final_test)))
-X_final_test = X_final_test.drop(overfit_features(X_final_test), axis=1)
-
-
-print("List of overfitted features: \n{}".format(overfit_features(final_data)))
-final_data = final_data.drop(overfit_features(final_data), axis=1)
-
-
+print("List of overfitted features: \n{}".format(overfits))
+X = X.drop(overfits, axis=1)
+print("List of overfitted features: \n{}".format(overfits))
+X_final_test = X_final_test.drop(overfits, axis=1)
 
 
 """-------------------------FITTING MODEL SECTION---------------------------"""
@@ -411,23 +411,6 @@ final_data = final_data.drop(overfit_features(final_data), axis=1)
 
 # Split data into train/test sets, k num of folds, shuffle data before split, set constant random generator 
 k_folds = KFold(n_splits=10, shuffle=True, random_state=0)
-
-def rmsle(y, y_pred):
-    """root mean squared log error(RMSLE) chosen to scale down outliers, nullify their effects
-       -only consider relative error:
-       relative error = absolute error(magnitude of error) / exact value (magnitude)
-       E.g: 
-           y=100, X_pred=90 => RMSLE (cal relative error)=10/100 = 0.1
-           Y=10000, X_pred=9000 => RMSLE=1000/10000 = 0.1
-       -biased penalty:
-       larger penalty for underestimation of value than overestimation
-       E.g:
-           y=1000, X_pred=600 => RMSLE = 0.51 (underestimation)
-           y=1000, X_pred=1400 => RMSLE = 0.33 (overestimation)
-           Overestimated sale price: if sell more to earn, if buy more money prepared
-           Useful for delivery time regression problem
-    """
-    return np.sqrt(mean_squared_error(y, y_pred))
 
 def rmse(model, X=X):
     """Root mean squared error"""
@@ -520,6 +503,23 @@ def blend_models_predict(X):
             (0.15 * xgb_model.predict(X)) +             
             (0.3 * stack_reg_models.predict(np.array(X))))
     
+def rmsle(y, y_pred):
+    """root mean squared log error(RMSLE) chosen to scale down outliers, nullify their effects
+       -only consider relative error:
+       relative error = absolute error(magnitude of error) / exact value (magnitude)
+       E.g: 
+           y=100, X_pred=90 => RMSLE (cal relative error)=10/100 = 0.1
+           Y=10000, X_pred=9000 => RMSLE=1000/10000 = 0.1
+       -biased penalty:
+       larger penalty for underestimation of value than overestimation
+       E.g:
+           y=1000, X_pred=600 => RMSLE = 0.51 (underestimation)
+           y=1000, X_pred=1400 => RMSLE = 0.33 (overestimation)
+           Overestimated sale price: if sell more to earn, if buy more money prepared
+           Useful for delivery time regression problem
+    """
+    return np.sqrt(mean_squared_error(y, y_pred))
+
 # Test accuracy score, lower RMSLE better accuracy
 print('RMSLE score on train data:')
 print(rmsle(y, blend_models_predict(X)))
@@ -528,7 +528,16 @@ print(rmsle(y, blend_models_predict(X)))
 print('Predict submission')
 submission = pd.read_csv("C:/Users/User/Desktop/housing_prices/dataset/sample_submission.csv")
 submission.iloc[:,1] = np.floor(np.expm1(blend_models_predict(X_final_test)))
-submission.to_csv("submission2.csv", index=False)
+submission.to_csv("submission4.csv", index=False)
+
+
+"""
+# Non kaggle submission format
+sub = pd.DataFrame()
+sub['Id'] = test.index
+sub['SalePrice'] = np.floor(np.expm1(blend_models_predict(X_final_test)))
+sub.to_csv('submission5.csv',index=False)
+"""
 
 """
 print('Submit prediction')
